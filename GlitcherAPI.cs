@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -17,11 +17,8 @@ namespace GlitcherWPF
             public class ClientInfo
             {
                 public int id { get; set; }
-
                 public string name { get; set; }
-
                 public string version { get; set; }
-
                 public int state { get; set; }
             }
 
@@ -33,29 +30,28 @@ namespace GlitcherWPF
             private const int GameMemoryThreshold = 500 * 1024 * 1024; // 500MB
 
             private static string _currentUserLevel = "3";
-
             private static bool Initialized = false;
-
             private static string _attachNotifyTitle = "[GlitcherAPI]";
-
             private static string _attachNotifyText = "Succesfully Attached!";
 
-            [DllImport("bin\\Xeno.dll", CallingConvention = CallingConvention.Cdecl)]
+            [DllImport("Xeno.dll", CallingConvention = CallingConvention.Cdecl)]
             private static extern void Initialize(bool useConsole);
 
-            [DllImport("bin\\Xeno.dll", CallingConvention = CallingConvention.Cdecl)]
+            [DllImport("Xeno.dll", CallingConvention = CallingConvention.Cdecl)]
             private static extern void Attach();
 
-            [DllImport("bin\\Xeno.dll", CallingConvention = CallingConvention.Cdecl)]
+            [DllImport("Xeno.dll", CallingConvention = CallingConvention.Cdecl)]
             private static extern IntPtr GetClients();
 
-            [DllImport("bin\\Xeno.dll", CallingConvention = CallingConvention.StdCall)]
+            [DllImport("Xeno.dll", CallingConvention = CallingConvention.StdCall)]
             public static extern void SetSettings(APISetting settingID, int value);
 
-            [DllImport("bin\\Xeno.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+            [DllImport("Xeno.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
             public static extern void Execute(byte[] scriptSource, int[] PIDs, int numUsers);
 
             private static bool _useCustomNotifier = false;
+            private static string _customNotifierTitle = "GlitcherAPI Injected";
+            private static string _customNotifierSubtext = "Injection Succeeded";
 
             public static void OldSetInjectionNotification(string title, string text)
             {
@@ -66,8 +62,7 @@ namespace GlitcherWPF
                 _attachNotifyTitle = title;
                 _attachNotifyText = text;
             }
-            private static string _customNotifierTitle = "GlitcherAPI Injected";
-            private static string _customNotifierSubtext = "Injection Succeeded";
+
             public static void SetDefualtNotifier(bool useCustom, string title, string Subtext)
             {
                 _useCustomNotifier = useCustom;
@@ -75,7 +70,6 @@ namespace GlitcherWPF
                 _customNotifierSubtext = Subtext;
             }
 
-            // Added for logging support
             public static event Action<string, string> OnLogMessage;
 
             public static async Task<bool> InjectAsync()
@@ -336,6 +330,7 @@ gui:Destroy()";
 
                 ExecuteScript(script);
             }
+
             public static void ExecuteScript(string scriptSource)
             {
                 List<ClientInfo> clientsList = GetClientsList();
