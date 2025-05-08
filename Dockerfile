@@ -1,24 +1,27 @@
-# Используем официальный образ .NET SDK для сборки
-FROM mcr.microsoft.com/dotnet/sdk:6.0 AS build
-WORKDIR /app
+Use .NET 6.0 SDK for building
 
-# Копируем файлы проекта и восстанавливаем зависимости
-COPY *.csproj ./
-RUN dotnet restore
+FROM mcr.microsoft.com/dotnet/sdk:6.0 AS build WORKDIR /app
 
-# Копируем остальной код и собираем приложение
-COPY . ./
-RUN dotnet publish -c Release -o out
+Copy csproj and restore dependencies
 
-# Создаём финальный образ для запуска
-FROM mcr.microsoft.com/dotnet/runtime:6.0
-WORKDIR /app
-COPY --from=build /app/out .
-COPY Xeno.dll .
+COPY *.csproj ./ RUN dotnet restore
 
-# Указываем порт, который будет использоваться
-ENV PORT=10000
-EXPOSE 10000
+Copy the rest of the code and build
 
-# Команда для запуска приложения
+COPY . ./ RUN dotnet publish -c Release -o out
+
+Create runtime image
+
+FROM mcr.microsoft.com/dotnet/aspnet:6.0 AS runtime WORKDIR /app COPY --from=build /app/out ./
+
+Expose port for WebSocket
+
+EXPOSE 8080
+
+Set environment variables
+
+ENV ASPNETCORE_URLS=http://+:8080
+
+Run the application
+
 ENTRYPOINT ["dotnet", "GlitcherServer.dll"]
