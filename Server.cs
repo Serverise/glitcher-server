@@ -1,106 +1,104 @@
 using System;
-using WebSocketSharp;
-using WebSocketSharp.Server;
-using System.Text.Json;
-using GlitcherWPF;
+using System.Net;
+using System.Net.WebSockets;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace GlitcherServer
 {
-    class Program
+    public class Server
     {
-        static void Main(string[] args)
-        {
-            string port = Environment.GetEnvironmentVariable("PORT") ?? "10000";
-            var wssv = new WebSocketServer($"ws://0.0.0.0:{port}");
-            wssv.AddWebSocketService<GlitcherService>("/glitcher");
-            wssv.AddWebSocketService<HealthCheckService>("/healthz");
-            wssv.Start();
-            Console.WriteLine($"WebSocket server started at ws://0.0.0.0:{port}/glitcher");
-            Console.ReadKey();
-            wssv.Stop();
-        }
-    }
+        private readonly HttpListener _listener;
+        private readonly string _url;
+        private readonly GlitcherAPI _api;
 
-    public class GlitcherService : WebSocketBehavior
-    {
-        protected override void OnOpen()
+        public Server(string url, GlitcherAPI api)
         {
-            Console.WriteLine("Client connected");
-            GlitcherAPI.GlitcherModule.OnLogMessage += (message, level) =>
-            {
-                Send(JsonSerializer.Serialize(new { type = "log", level, message }));
-            };
+            _url = url ?? throw new ArgumentNullException(nameof(url));
+            _api = api ?? throw new ArgumentNullException(nameof(api));
+            _listener = new HttpListener();
+            _listener.Prefixes.Add(url);
         }
 
-        protected override void OnMessage(MessageEventArgs e)
+        public async Task StartAsync(CancellationToken cancellationToken = default)
         {
             try
             {
-                var data = JsonSerializer.Deserialize<dynamic>(e.Data);
-                string type = data.type;
+                _listener.Start();
+                Console.WriteLine($"Server started at {_url}");
+                _api.OnLogMessage?.Invoke($"Server started at {_url}");
 
-                switch (type)
+                while (!cancellationToken.IsCancellationRequested)
                 {
-                    case "inject":
-                        if (GlitcherAPI.GlitcherModule.InjectionCheck() == 1)
-                        {
-                            Send(JsonSerializer.Serialize(new { type = "alreadyInjected" }));
-                        }
-                        else
-                        {
-                            GlitcherAPI.GlitcherModule.InjectAsync().ContinueWith(t =>
-                            {
-                                Send(JsonSerializer.Serialize(new
-                                {
-                                    type = "inject",
-                                    success = t.Result,
-                                    message = t.Result ? "Injected successfully" : "Injection failed"
-                                }));
-                            });
-                        }
-                        break;
-                    case "execute":
-                        string script = data.script;
-                        try
-                        {
-                            GlitcherAPI.GlitcherModule.ExecuteScript(script);
-                            Send(JsonSerializer.Serialize(new { type = "execute", success = true }));
-                        }
-                        catch (Exception ex)
-                        {
-                            Send(JsonSerializer.Serialize(new { type = "execute", success = false, message = ex.Message }));
-                        }
-                        break;
-                    case "setAutoInject":
-                        bool enabled = data.enabled;
-                        GlitcherAPI.GlitcherModule.UseAutoInject(enabled);
-                        break;
-                    case "alreadyInjected":
-                        Send(JsonSerializer.Serialize(new { type = "alreadyInjected" }));
-                        break;
-                    default:
-                        Send(JsonSerializer.Serialize(new { type = "error", message = "Unknown command" }));
-                        break;
+                    var context = await _listener.GetContextAsync();
+                    if (context.Request.IsWebSocketRequest)
+                    {
+                        _ = ProcessWebSocketRequestAsync(context, cancellationToken);
+                    }
+                    else
+                    {
+                        context.Response.StatusCode = 400;
+                        context.Response.Close();
+                    }
                 }
             }
             catch (Exception ex)
             {
-                Send(JsonSerializer.Serialize(new { type = "error", message = ex.Message }));
+                _api.OnLogMessage?.Invoke($"Server error: {ex.Message}");
             }
         }
 
-        protected override void OnClose(CloseEventArgs e)
+        private async Task ProcessWebSocketRequestAsync(HttpListenerContext context, CancellationToken cancellationToken)
         {
-            Console.WriteLine("Client disconnected");
-        }
-    }
+            HttpListenerWebSocketContext wsContext = null;
+            try
+            {
+                wsContext = await context.AcceptWebSocketAsync(null);
+                var webSocket = wsContext.WebSocket;
 
-    public class HealthCheckService : WebSocketBehavior
-    {
-        protected override void OnOpen()
+                var buffer = new byte[1024 * 4];
+                while (webSocket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
+                {
+                    var result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
+                    if (result.MessageType == WebSocketMessageType.Text)
+                    {
+                        var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                        var response = await _api.ProcessMessageAsync(message);
+                        if (!string.IsNullOrEmpty(response))
+                        {
+                            var responseBytes = Encoding.UTF8.GetBytes(response);
+                            await webSocket.SendAsync(new ArraySegment<byte>(responseBytes), WebSocketMessageType.Text, true, cancellationToken);
+                        }
+                    }
+                    else if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", cancellationToken);
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _api.OnLogMessage?.Invoke($"WebSocket error: {ex.Message}");
+            }
+            finally
+            {
+                if (wsContext?.WebSocket != null)
+                {
+                    await wsContext.WebSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
+                }
+            }
+        }
+
+        public async Task StopAsync()
         {
-            Send("OK");
-            Close();
+            if (_listener.IsListening)
+            {
+                _listener.Stop();
+                _listener.Close();
+                _api.OnLogMessage?.Invoke("Server stopped");
+            }
         }
     }
 }
